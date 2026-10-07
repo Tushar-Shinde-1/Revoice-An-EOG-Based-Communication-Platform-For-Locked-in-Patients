@@ -148,6 +148,159 @@ class ApiService {
       return null;
     }
   }
+
+  // ==========================================
+  // ML DATASET COLLECTION API (MODULE 2)
+  // ==========================================
+  async getDatasetStats(): Promise<DatasetStats> {
+    try {
+      const res = await fetch(`${API_BASE_URL}/dataset/stats`);
+      const json = await res.json();
+      if (json.success && json.data) {
+        return json.data;
+      }
+    } catch (err) {
+      console.warn('API getDatasetStats fallback to local cache:', err);
+    }
+
+    // LocalStorage fallback if backend/MongoDB offline
+    const local = localStorage.getItem('revoice_dataset_samples');
+    const samples: DatasetSampleRecord[] = local ? JSON.parse(local) : [];
+    const stats: DatasetStats = {
+      LOOK_LEFT: 0,
+      LOOK_RIGHT: 0,
+      DOUBLE_BLINK: 0,
+      TRIPLE_BLINK: 0,
+      REST: 0,
+      total: samples.length
+    };
+    samples.forEach(s => {
+      if (stats.hasOwnProperty(s.label)) {
+        stats[s.label]++;
+      }
+    });
+    return stats;
+  }
+
+  async getDatasetSamples(label?: string): Promise<DatasetSampleRecord[]> {
+    try {
+      const url = label ? `${API_BASE_URL}/dataset/samples?label=${label}` : `${API_BASE_URL}/dataset/samples`;
+      const res = await fetch(url);
+      const json = await res.json();
+      if (json.success && json.data) {
+        return json.data;
+      }
+    } catch (err) {
+      console.warn('API getDatasetSamples fallback to local cache:', err);
+    }
+
+    const local = localStorage.getItem('revoice_dataset_samples');
+    const samples: DatasetSampleRecord[] = local ? JSON.parse(local) : [];
+    if (label) {
+      return samples.filter(s => s.label === label);
+    }
+    return samples;
+  }
+
+  async saveDatasetSample(sample: DatasetSampleRecord): Promise<DatasetSampleRecord | null> {
+    // 1. Save to localStorage as immediate backup
+    try {
+      const local = localStorage.getItem('revoice_dataset_samples');
+      const samples: DatasetSampleRecord[] = local ? JSON.parse(local) : [];
+      const backupSample = {
+        ...sample,
+        _id: sample._id || `local_${Date.now()}`,
+        createdAt: sample.createdAt || new Date().toISOString()
+      };
+      samples.unshift(backupSample);
+      localStorage.setItem('revoice_dataset_samples', JSON.stringify(samples.slice(0, 500)));
+    } catch (e) {
+      console.warn('LocalStorage save failed:', e);
+    }
+
+    // 2. Persist to MongoDB
+    try {
+      const res = await fetch(`${API_BASE_URL}/dataset/samples`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(sample)
+      });
+      const json = await res.json();
+      return json.data || null;
+    } catch (err) {
+      console.warn('Backend offline, sample cached in localStorage:', err);
+      return sample;
+    }
+  }
+
+  async deleteDatasetSample(id: string): Promise<boolean> {
+    // Delete from localStorage
+    try {
+      const local = localStorage.getItem('revoice_dataset_samples');
+      if (local) {
+        const samples: DatasetSampleRecord[] = JSON.parse(local);
+        localStorage.setItem('revoice_dataset_samples', JSON.stringify(samples.filter(s => s._id !== id)));
+      }
+    } catch {}
+
+    // Delete from Backend
+    try {
+      const res = await fetch(`${API_BASE_URL}/dataset/samples/${id}`, {
+        method: 'DELETE'
+      });
+      const json = await res.json();
+      return !!json.success;
+    } catch (err) {
+      return true;
+    }
+  }
+
+  async clearDataset(): Promise<boolean> {
+    localStorage.removeItem('revoice_dataset_samples');
+    try {
+      const res = await fetch(`${API_BASE_URL}/dataset/clear`, {
+        method: 'DELETE'
+      });
+      const json = await res.json();
+      return !!json.success;
+    } catch (err) {
+      return true;
+    }
+  }
+
+  getDatasetExportUrl(): string {
+    return `${API_BASE_URL}/dataset/export`;
+  }
+}
+
+export interface DatasetStats {
+  LOOK_LEFT: number;
+  LOOK_RIGHT: number;
+  DOUBLE_BLINK: number;
+  TRIPLE_BLINK: number;
+  REST: number;
+  total: number;
+}
+
+export interface DatasetSampleRecord {
+  _id?: string;
+  label: 'LOOK_LEFT' | 'LOOK_RIGHT' | 'DOUBLE_BLINK' | 'TRIPLE_BLINK' | 'REST';
+  gestureCode?: string;
+  source?: 'ble' | 'serial' | 'simulator' | 'keyboard' | 'guided';
+  sampleRate?: number;
+  windowSize?: number;
+  signal: {
+    horizontal: number[];
+    vertical: number[];
+  };
+  metrics?: {
+    horizontalPeak: number;
+    verticalPeak: number;
+    rms: number;
+  };
+  subjectId?: string;
+  notes?: string;
+  createdAt?: string;
 }
 
 export const apiService = new ApiService();

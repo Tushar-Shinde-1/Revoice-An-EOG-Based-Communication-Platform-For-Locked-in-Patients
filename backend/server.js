@@ -39,6 +39,7 @@ mongoose.connect(MONGO_URI)
 app.use('/api/requests', require('./routes/requests'));
 app.use('/api/health', require('./routes/health'));
 app.use('/api/settings', require('./routes/settings'));
+app.use('/api/dataset', require('./routes/dataset'));
 
 // Root Status Route
 app.get('/api/status', (req, res) => {

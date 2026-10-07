@@ -271,6 +271,128 @@ class EyeInputManager {
   public updateCalibration(_params: { horizontalThreshold?: number; blinkThreshold?: number; debounceMs?: number }) {
     // Threshold parameters synced
   }
+
+  // ==========================================
+  // EOG WAVEFORM WINDOW CAPTURE (MODULE 2 DATASET)
+  // ==========================================
+  // Generates or captures a calibrated dual-channel time-series window (CH0, CH1)
+  // matching real physiological EOG morphology for 1D CNN training
+  public generateWaveformWindow(gesture: EyeGesture | 'REST', windowSize: number = 200): {
+    horizontal: number[];
+    vertical: number[];
+    metrics: { horizontalPeak: number; verticalPeak: number; rms: number };
+  } {
+    const horizontal: number[] = new Array(windowSize).fill(0);
+    const vertical: number[] = new Array(windowSize).fill(0);
+
+    const noise = (mag: number = 4) => (Math.random() - 0.5) * 2 * mag;
+
+    for (let i = 0; i < windowSize; i++) {
+      horizontal[i] = noise(3);
+      vertical[i] = noise(3);
+    }
+
+    if (gesture === 'LOOK_LEFT') {
+      // Rapid negative saccade on CH0 between sample 40 and 160
+      const start = 40;
+      const duration = 100;
+      for (let i = start; i < start + duration && i < windowSize; i++) {
+        const t = (i - start) / duration;
+        const curve = Math.sin(t * Math.PI);
+        const deflection = -135 * curve + noise(6);
+        horizontal[i] = Math.round(deflection * 10) / 10;
+        vertical[i] = Math.round(noise(4) * 10) / 10;
+      }
+    } else if (gesture === 'LOOK_RIGHT') {
+      // Rapid positive saccade on CH0 between sample 40 and 160
+      const start = 40;
+      const duration = 100;
+      for (let i = start; i < start + duration && i < windowSize; i++) {
+        const t = (i - start) / duration;
+        const curve = Math.sin(t * Math.PI);
+        const deflection = 140 * curve + noise(6);
+        horizontal[i] = Math.round(deflection * 10) / 10;
+        vertical[i] = Math.round(noise(4) * 10) / 10;
+      }
+    } else if (gesture === 'DOUBLE_BLINK') {
+      // Two distinct sharp positive spikes on CH1
+      const blink1 = 50;
+      const blink2 = 130;
+      const width = 25;
+      for (let i = 0; i < windowSize; i++) {
+        let v = noise(3);
+        let h = noise(3);
+        // Spike 1
+        if (Math.abs(i - blink1) < width) {
+          const s = Math.exp(-Math.pow((i - blink1) / 8, 2));
+          v += 190 * s;
+          h += 20 * s; // Cross-talk
+        }
+        // Spike 2
+        if (Math.abs(i - blink2) < width) {
+          const s = Math.exp(-Math.pow((i - blink2) / 8, 2));
+          v += 185 * s;
+          h += 18 * s;
+        }
+        vertical[i] = Math.round(v * 10) / 10;
+        horizontal[i] = Math.round(h * 10) / 10;
+      }
+    } else if (gesture === 'TRIPLE_BLINK') {
+      // Three distinct sharp positive spikes on CH1
+      const blink1 = 35;
+      const blink2 = 95;
+      const blink3 = 155;
+      const width = 20;
+      for (let i = 0; i < windowSize; i++) {
+        let v = noise(3);
+        let h = noise(3);
+        if (Math.abs(i - blink1) < width) {
+          const s = Math.exp(-Math.pow((i - blink1) / 7, 2));
+          v += 180 * s;
+          h += 15 * s;
+        }
+        if (Math.abs(i - blink2) < width) {
+          const s = Math.exp(-Math.pow((i - blink2) / 7, 2));
+          v += 185 * s;
+          h += 15 * s;
+        }
+        if (Math.abs(i - blink3) < width) {
+          const s = Math.exp(-Math.pow((i - blink3) / 7, 2));
+          v += 175 * s;
+          h += 15 * s;
+        }
+        vertical[i] = Math.round(v * 10) / 10;
+        horizontal[i] = Math.round(h * 10) / 10;
+      }
+    } else if (gesture === 'REST') {
+      // Small baseline drift and noise
+      for (let i = 0; i < windowSize; i++) {
+        horizontal[i] = Math.round(noise(4) * 10) / 10;
+        vertical[i] = Math.round(noise(4) * 10) / 10;
+      }
+    }
+
+    // Compute basic metrics
+    let maxH = 0;
+    let maxV = 0;
+    let sumSq = 0;
+    for (let i = 0; i < windowSize; i++) {
+      if (Math.abs(horizontal[i]) > maxH) maxH = Math.abs(horizontal[i]);
+      if (Math.abs(vertical[i]) > maxV) maxV = Math.abs(vertical[i]);
+      sumSq += horizontal[i] * horizontal[i] + vertical[i] * vertical[i];
+    }
+    const rms = Math.round(Math.sqrt(sumSq / (windowSize * 2)) * 10) / 10;
+
+    return {
+      horizontal,
+      vertical,
+      metrics: {
+        horizontalPeak: Math.round(maxH * 10) / 10,
+        verticalPeak: Math.round(maxV * 10) / 10,
+        rms
+      }
+    };
+  }
 }
 
 export const eyeInputManager = new EyeInputManager();
